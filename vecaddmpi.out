@@ -1,0 +1,26 @@
+You have not been allocated GPUs. To request GPUs, use the -G option in your submission script.
+Assigning compute node to rank 1.
+ComputeNode: Starting with rank 1.
+ComputeNode (1): Waiting for vectors from dataserver with rank 3...
+Assigning compute node to rank 2.
+ComputeNode: Starting with rank 2.
+ComputeNode (2): Waiting for vectors from dataserver with rank 3...
+Assigning data server node to rank 3.
+DataServer: Starting with rank 3 and vector of size 1 GB
+DataServer (3): filling two input vectors with random floats between 1.000000 and 10.000000...
+Will try to allocate a vector of size 1 GB.
+Assigning compute node to rank 0.
+ComputeNode: Starting with rank 0.
+ComputeNode (0): Waiting for vectors from dataserver with rank 3...
+DataServer (3): finished generating random vector elements.
+DataServer (3): Sending vector of size 89478485 to compute node with id 0.
+DataServer (3): Sending vector of size 89478485 to compute node with id 1.
+DataServer (3): Sending vector of size 89478485 to compute node with id 2.
+ComputeNode (0): Partial vector addition complete.
+ComputeNode (1): Partial vector addition complete.
+ComputeNode (2): Partial vector addition complete.
+DataServer (3): All compute nodes finished. Receiving partial results.
+DataServer (3): Comparing parallel computation to serial computation...
+DataServer (3): Performing serial computation...
+DataServer (3): Comparing results...
+DataServer (3): Error is 0.000000%.
