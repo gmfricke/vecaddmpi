@@ -138,7 +138,7 @@ void data_server(unsigned int vector_size)
     }
   end = clock();
   time_spent = (double)(end - begin) / CLOCKS_PER_SEC;
-  printf("DataServer (%d): Recieved results from all compute processes (%g s).\n", rank, time_spent);
+  printf("DataServer (%d): Received results from all compute processes (%g s).\n", rank, time_spent);
 
   clock_t end_total = clock();
   double total_time_spent = (double)(end_total - begin_total) / CLOCKS_PER_SEC;
