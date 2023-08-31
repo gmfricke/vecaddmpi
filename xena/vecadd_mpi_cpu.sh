@@ -1,6 +1,6 @@
 #!/bin/bash
 #SBATCH --job-name=vecaddmpi
-#SBATCH --partition=debug
+#SBATCH --partition=singleGPU
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=3
 #SBATCH --time=00:10:00

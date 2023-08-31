@@ -3,6 +3,7 @@
 #include "math.h"
 #include "stdio.h"
 #include "stdlib.h"
+#include <time.h>
 
 extern int DATA_DISTRIBUTE;
 extern int DATA_COLLECT;
@@ -18,8 +19,9 @@ __global__ void gpu_vecadd(float *a, float *b, float *c, int n)
     c[id] = a[id] + b[id];
 }
 
-void compute_node_gpu(unsigned int vector_size ) 
+void compute_process_gpu(unsigned int vector_size ) 
 {
+  clock_t begin = clock();	
   int np;
   unsigned int num_bytes = vector_size * sizeof(float);
   float *input_a, *input_b, *output;
@@ -51,7 +53,7 @@ void compute_node_gpu(unsigned int vector_size )
   int compute_node_indicator = 1; // 0 for non-compute node, 1 for compute node. Use all reduce for simplicity.
   MPI_Allreduce(&compute_node_indicator, &n_compute_nodes_on_host, 1, MPI_INT, MPI_SUM, intranode_comm);
 
-  printf("ComputeNode (%d): There are %d MPI proceses on host %s, %d are compute nodes.\n", 
+  printf("ComputeNode (%d): There are %d MPI proceses on host %s, %d are compute processes.\n", 
 	 rank, n_procs_on_host, proc_name, n_compute_nodes_on_host);
   fflush(stdout);
   
@@ -97,20 +99,43 @@ void compute_node_gpu(unsigned int vector_size )
   cudaMalloc(&gpu_input_b, num_bytes);
   cudaMalloc(&gpu_output, num_bytes);
 
-  printf("ComputeNode (%d): Waiting for data with %d elements from data server %d.\n", rank, vector_size, server_process);
+  clock_t end = clock();
+  double time_spent = (double)(end - begin) / CLOCKS_PER_SEC;
+  printf("ComputeProcess: Started with rank %d (%g s).\n", rank, time_spent);
   fflush(stdout);
+
+
+  printf("ComputeProcess (%d): Waiting for data with %d elements from data server %d.\n", rank, vector_size, server_process);
+  fflush(stdout);
+
+  begin = clock();
 
   /* Get the input data from data server process */
   MPI_Recv(input_a, vector_size, MPI_FLOAT, server_process, DATA_DISTRIBUTE, MPI_COMM_WORLD, &status);
 
   MPI_Recv(input_b, vector_size, MPI_FLOAT, server_process, DATA_DISTRIBUTE, MPI_COMM_WORLD, &status);
 
+  end = clock();
+  time_spent = (double)(end - begin) / CLOCKS_PER_SEC;
+  printf("ComputeProcess (%d): Waited for %g s.\n", rank, time_spent);
+
+  begin = clock();
+
   /* Compute the partial vector addition */
 
   // Copy host vectors to device
+  
   cudaMemcpy( gpu_input_a, input_a, num_bytes, cudaMemcpyHostToDevice);
   cudaMemcpy( gpu_input_b, input_b, num_bytes, cudaMemcpyHostToDevice);
  
+  end = clock();	
+  time_spent = (double)(end - begin) / CLOCKS_PER_SEC;
+
+  printf("ComputeProcess (%d): Loaded data onto GPU (%g s).\n", rank, time_spent);
+  fflush(stdout);
+
+  begin = clock();
+
   int block_size, grid_size;
  
   // Number of threads in each thread block
@@ -122,41 +147,50 @@ void compute_node_gpu(unsigned int vector_size )
   // Execute the kernel
   gpu_vecadd<<<grid_size, block_size>>>(gpu_input_a, gpu_input_b, gpu_output, vector_size);
 
+  end = clock();
+  time_spent = (double)(end - begin) / CLOCKS_PER_SEC;
+
+  printf("ComputeProcess (%d): GPU partial vector addition complete (%g s).\n", rank, time_spent);
+  fflush(stdout);
+
   // Copy array back to host
+  begin = clock();     
+  
   cudaMemcpy( output, gpu_output, num_bytes, cudaMemcpyDeviceToHost );
+  
+  printf("ComputeProcess (%d): Copy data from GPU (%g s).\n", rank, time_spent);
+  fflush(stdout);
 
   // Signal that computation is done
-  printf("ComputeNode (%d): GPU partial vector addition complete.\n", rank);
-  fflush(stdout);
-
+  
   // Check GPU calculation against CPU version for debugging
   // Add vectors using CPU
-  float *cpu_output = (float *)malloc(num_bytes);
-  for(int i = 0; i < vector_size; i++) 
-    cpu_output[i] = input_a[i] + input_b[i];
+  //float *cpu_output = (float *)malloc(num_bytes);
+  //for(int i = 0; i < vector_size; i++) 
+  //  cpu_output[i] = input_a[i] + input_b[i];
 
-  float error = 0;
-  float total = 0;
-  for(int i = 0; i < vector_size; i++)
-    {
-      total = total + cpu_output[i];
-      error = error + abs(cpu_output[i] - output[i]);
-    }
+  //float error = 0;
+  //float total = 0;
+  //for(int i = 0; i < vector_size; i++)
+  //  {
+  //    total = total + cpu_output[i];
+  //    error = error + abs(cpu_output[i] - output[i]);
+  //  }
 
-  printf("ComputeNode (%d): GPU result differs from CPU result by %f%%.\n", rank, 100.0*error/total);
-  fflush(stdout);
+  //printf("ComputeNode (%d): GPU result differs from CPU result by %f%%.\n", rank, 100.0*error/total);
+  //fflush(stdout);
 
-  printf("ComputeNode (%d): CPU result (first 10 elements):\n", rank);
-  for(int i = 0; i < 10; i++)
-      printf("%f ", cpu_output[i]);
-  printf("\n");
-  fflush(stdout);	 
+  //printf("ComputeNode (%d): CPU result (first 10 elements):\n", rank);
+  //for(int i = 0; i < 10; i++)
+  //    printf("%f ", cpu_output[i]);
+  //printf("\n");
+  //fflush(stdout);	 
 
-  printf("ComputeNode (%d): GPU result (first 10 elements):\n", rank);
-  for(int i = 0; i < 10; i++)
-      printf("%f ", output[i]);
-  printf("\n");
-  fflush(stdout);	 
+  //printf("ComputeNode (%d): GPU result (first 10 elements):\n", rank);
+  //for(int i = 0; i < 10; i++)
+  //    printf("%f ", output[i]);
+  //printf("\n");
+  //fflush(stdout);	 
 
   MPI_Barrier(MPI_COMM_WORLD);
 
@@ -174,5 +208,5 @@ void compute_node_gpu(unsigned int vector_size )
   free(input_a);
   free(input_b);
   free(output);
-  free(cpu_output); 
+  //free(cpu_output); 
 }

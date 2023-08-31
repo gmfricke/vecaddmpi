@@ -246,7 +246,7 @@ void compute_process(unsigned int vector_size )
 
 int main(int argc, char *argv[]) 
 {
-  int vector_size = 1024 * 1024 * 1000;
+  int vector_size = 1024 * 1024 * 512;
 
   int pid=-1, np=-1;
   MPI_Init(&argc, &argv);

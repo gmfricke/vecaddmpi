@@ -21,8 +21,9 @@
 #include "stdio.h"
 #include "stdlib.h"
 #include "mpi.h"
+#include <time.h>
 
-extern void compute_node_gpu(unsigned int vector_size ); 
+extern void compute_process_gpu(unsigned int vector_size ); 
 
 int DATA_DISTRIBUTE = 0;
 int DATA_COLLECT = 1;
@@ -92,12 +93,12 @@ void data_server(unsigned int vector_size)
   MPI_Get_processor_name(proc_name, &proc_name_len);
 
   // Perform a sum reduce to determine how many of the MPI processes on this computer are compute nodes
-  int n_compute_nodes_on_host = 0;
-  int compute_node_indicator = 0; // 0 for non-compute node, 1 for compute node. Use all reduce instead of reduce for simplicity.
-  MPI_Allreduce(&compute_node_indicator, &n_compute_nodes_on_host, 1, MPI_INT, MPI_SUM, intranode_comm);
+  int n_compute_processes_on_host = 0;
+  int compute_process_indicator = 0; // 0 for non-compute processes, 1 for compute processes. Use all reduce instead of reduce for simplicity.
+  MPI_Allreduce(&compute_process_indicator, &n_compute_processes_on_host, 1, MPI_INT, MPI_SUM, intranode_comm);
 
-  printf("DataServer (%d): There are %d MPI proceses on host %s, %d are compute nodes.\n", 
-	 rank, n_procs_on_host, proc_name, n_compute_nodes_on_host);
+  printf("DataServer (%d): There are %d MPI proceses on host %s, %d are compute processes.\n", 
+	 rank, n_procs_on_host, proc_name, n_compute_processes_on_host);
   fflush(stdout);
 
   unsigned int num_bytes = vector_size * sizeof(float);
@@ -106,7 +107,7 @@ void data_server(unsigned int vector_size)
   printf("DataServer: Starting with rank %d.\n", rank);
   fflush(stdout);
 
-  int n_compute_nodes = np-1;
+  int n_compute_processes = np-1;
   float *input_a = 0, *input_b = 0, *output = 0;
 
   /* Allocate input data */
@@ -120,44 +121,57 @@ void data_server(unsigned int vector_size)
       MPI_Abort( MPI_COMM_WORLD, 1 );
     }
 
+  clock_t begin = clock();
   /* Initialize input data */
   float min = 1, max = 10;
-  printf("DataServer (%d): filling two input vectors with random floats between %f and %f...\n", rank, min, max);
+  printf("DataServer (%d): filling two input vectors with %d random floats between %f and %f...\n", rank, vector_size, min, max);
   fflush(stdout);
   random_data(input_a, vector_size , min, max);
   random_data(input_b, vector_size , min, max);
+  clock_t end = clock();
+  double time_spent = (double)(end - begin) / CLOCKS_PER_SEC;
 
-  printf("DataServer (%d): finished generating %d random vector elements.\n", rank, vector_size);
+  printf("DataServer (%d): finished generating %d random vector elements (%g s).\n", rank, vector_size, time_spent);
   fflush(stdout);
 
-  /* Send data to compute nodes */
+  /* Send data to compute processes */
+  clock_t begin_total = clock();
+  begin = clock();
   float *ptr_a = input_a;
   float *ptr_b = input_b;
   
   int compute_portion_size; // Number of element to receive (floats)
-  compute_portion_size = vector_size/n_compute_nodes; // This is like the stride
+  compute_portion_size = vector_size/n_compute_processes; // This is like the stride
 
   for(int process = 1; process < np; process++) 
     {
-      printf("DataServer (%d): Sending vector A of size %d to compute node with id %d.\n", rank, compute_portion_size, process);
+      printf("DataServer (%d): Sending vector A of size %d to compute processes with id %d.\n", rank, compute_portion_size, process);
       fflush(stdout);
 
       MPI_Send(ptr_a, compute_portion_size, MPI_FLOAT, process, DATA_DISTRIBUTE, MPI_COMM_WORLD);
       ptr_a += compute_portion_size;
 
-      printf("DataServer (%d): Sending vector B of size %d to compute node with id %d.\n", rank, compute_portion_size, process);
+      printf("DataServer (%d): Sending vector B of size %d to compute processes with id %d.\n", rank, compute_portion_size, process);
       fflush(stdout);
 
       MPI_Send(ptr_b, compute_portion_size, MPI_FLOAT, process, DATA_DISTRIBUTE, MPI_COMM_WORLD);
       ptr_b += compute_portion_size;
     }
   
-  /* Wait for nodes to compute */
-  MPI_Barrier(MPI_COMM_WORLD);
-  printf("DataServer (%d): All compute nodes finished. Receiving partial results.\n", rank);
-  fflush(stdout);
+  end = clock();
+  time_spent = (double)(end - begin) / CLOCKS_PER_SEC;
+  printf("DataServer (%d): sending complete (%g s).\n", rank, time_spent);
 
+  /* Wait for processes to compute */
+  begin = clock();
+  MPI_Barrier(MPI_COMM_WORLD);
+  end = clock();
+  time_spent = (double)(end - begin) / CLOCKS_PER_SEC;
+  printf("DataServer (%d): All compute processes finished (%g s). Receiving partial results...\n", rank, time_spent);
+  fflush(stdout);
+ 
   /* Collect output data */
+  begin = clock();
   MPI_Status status;
   float *start_addr; // Where to start writing data to memory
 
@@ -171,58 +185,66 @@ void data_server(unsigned int vector_size)
       MPI_Recv( start_addr, compute_portion_size, MPI_FLOAT, process, DATA_COLLECT, MPI_COMM_WORLD, &status );
     }
 
+  end = clock();
+  time_spent = (double)(end - begin) / CLOCKS_PER_SEC;
+  printf("DataServer (%d): Received results from all compute processes (%g s).\n", rank, time_spent);
+
+  clock_t end_total = clock();
+  double total_time_spent = (double)(end_total - begin_total) / CLOCKS_PER_SEC;
+  printf("DataServer (%d): Total time %g s.\n", rank, total_time_spent);
 
   // Check the result against a serial computation
-  printf("DataServer (%d): Comparing parallel computation to serial computation...\n", rank);
-  fflush(stdout);
+  //printf("DataServer (%d): Comparing parallel computation to serial computation...\n", rank);
+  //fflush(stdout);
 
-  printf("DataServer (%d): Performing serial computation...\n", rank);
-  fflush(stdout);
+  //printf("DataServer (%d): Performing serial computation...\n", rank);
+  //fflush(stdout);
 
   // Add vectors in serial
-  float *serial_output = (float *)malloc(num_bytes);
-  for(int i = 0; i < vector_size; ++i) 
-    serial_output[i] = input_a[i] + input_b[i];
+  //float *serial_output = (float *)malloc(num_bytes);
+  //for(int i = 0; i < vector_size; ++i) 
+  //  serial_output[i] = input_a[i] + input_b[i];
   
-  printf("DataServer (%d): Comparing results...\n", rank);
-  fflush(stdout);
+  //printf("DataServer (%d): Comparing results...\n", rank);
+  //fflush(stdout);
 
-  float error = 0;
-  float total = 0;
-  for(int i = 0; i < vector_size; ++i)
-    {
-      total = total + serial_output[i];
-      error = error + abs(serial_output[i] - output[i]);
-    }
+  //float error = 0;
+  //float total = 0;
+  //for(int i = 0; i < vector_size; ++i)
+  //  {
+  //    total = total + serial_output[i];
+  //    error = error + abs(serial_output[i] - output[i]);
+  //  }
 
-  printf("DataServer (%d): Error is %f%%.\n", rank, 100.0*error/total);
-  fflush(stdout);
+  // printf("DataServer (%d): Error is %f%%.\n", rank, 100.0*error/total);
+  // fflush(stdout);
 
-  printf("DataServer (%d): MPI result (first 10 elements):\n", rank);
-  for(int i = 0; i < 10; i++)
-      printf("%f ", output[i]);
-  printf("\n");
+  // printf("DataServer (%d): MPI result (first 10 elements):\n", rank);
+  // for(int i = 0; i < 10; i++)
+  //    printf("%f ", output[i]);
+  // printf("\n");
 
-  printf("DataServer (%d): serial result (first 10 elements):\n", rank);
-  for(int i = 0; i < 10; i++)
-      printf("%f ", serial_output[i]);
-  printf("\n");
-  fflush(stdout);	 
+  // printf("DataServer (%d): serial result (first 10 elements):\n", rank);
+  // for(int i = 0; i < 10; i++)
+  //    printf("%f ", serial_output[i]);
+  // printf("\n");
+  // fflush(stdout);	 
 
   /* Release resources */
   free(input_a);
   free(input_b);
-  free(serial_output);
+  //free(serial_output);
   free(output);
 }
 
-void compute_node(unsigned int vector_size ) 
+void compute_process(unsigned int vector_size ) 
 {
+  clock_t begin = clock();
   // This process id
   int rank = -1;
   MPI_Comm_rank(MPI_COMM_WORLD, &rank);
 
-  printf("ComputeNode: Starting with rank %d.\n", rank);
+  printf("ComputeProcess: Starting with rank %d.\n", rank);
   fflush(stdout);
   
   int np;
@@ -249,12 +271,12 @@ void compute_node(unsigned int vector_size )
   MPI_Get_processor_name(proc_name, &proc_name_len);
   
   // Perform a sum reduce to determine how many of the MPI processes on this computer are compute nodes
-  int n_compute_nodes_on_host = 0;
-  int compute_node_indicator = 1; // 0 for non-compute node, 1 for compute node. Use all reduce instead of reduce for simplicity.
-  MPI_Allreduce(&compute_node_indicator, &n_compute_nodes_on_host, 1, MPI_INT, MPI_SUM, intranode_comm);
+  int n_compute_processes_on_host = 0;
+  int compute_process_indicator = 1; // 0 for non-compute node, 1 for compute node. Use all reduce instead of reduce for simplicity.
+  MPI_Allreduce(&compute_process_indicator, &n_compute_processes_on_host, 1, MPI_INT, MPI_SUM, intranode_comm);
 
-  printf("ComputeNode (%d): There are %d MPI proceses on host %s, %d are compute nodes.\n", 
-	 rank, n_procs_on_host, proc_name, n_compute_nodes_on_host);
+  printf("ComputeProcesses (%d): There are %d MPI proceses on host %s, %d are compute processes.\n", 
+	 rank, n_procs_on_host, proc_name, n_compute_processes_on_host);
   fflush(stdout);
 
   /* Alloc host memory */
@@ -262,20 +284,30 @@ void compute_node(unsigned int vector_size )
   input_b = (float *)malloc(num_bytes);
   output = (float *)malloc(num_bytes);
 
-  printf("ComputeNode (%d): Waiting for vectors with %d elements from dataserver with rank %d...\n", rank, vector_size, server_process);
+clock_t end = clock();
+  double time_spent = (double)(end - begin) / CLOCKS_PER_SEC;
+  printf("ComputeProcess: Started with rank %d (%g s).\n", rank, time_spent);
   fflush(stdout);
+
+  printf("ComputeProcess (%d): Waiting for vectors from dataserver with rank %d...\n", rank, server_process);
+  fflush(stdout);
+
+  begin = clock();
 
   /* Get the input data from server process */
   MPI_Recv(input_a, vector_size, MPI_FLOAT, server_process, DATA_DISTRIBUTE, MPI_COMM_WORLD, &status);
 
-  printf("ComputeNode (%d): Received input A from data server.\n", rank);
+  printf("ComputeProcess (%d): Received input A from data server.\n", rank);
   fflush(stdout);
 
   MPI_Recv(input_b, vector_size, MPI_FLOAT, server_process,
 	   DATA_DISTRIBUTE, MPI_COMM_WORLD, &status);
 
-  printf("ComputeNode (%d): Received input B from data server.\n", rank);
-  fflush(stdout);
+  end = clock();
+  time_spent = (double)(end - begin) / CLOCKS_PER_SEC;
+  printf("ComputeProcess (%d): Waited for %g s.\n", rank, time_spent);
+
+  begin = clock();
 
   /* Compute the partial vector addition */
   for(int i = 0; i < vector_size; ++i) 
@@ -283,7 +315,10 @@ void compute_node(unsigned int vector_size )
   
 
   // Signal that computation is done
-  printf("ComputeNode (%d): Partial vector addition complete.\n", rank);
+  end = clock();
+  time_spent = (double)(end - begin) / CLOCKS_PER_SEC;
+
+  printf("ComputeProcess (%d): Partial vector addition complete (%g s).\n", rank, time_spent);
   fflush(stdout);
   MPI_Barrier(MPI_COMM_WORLD);
 
@@ -312,14 +347,14 @@ int main(int argc, char *argv[])
 	}
     }
   
-  int vector_size = 1024 * 1024 * 100;
+  int vector_size = 1024 * 1024 * 512;
   
   int rank=-1, np=-1;
   MPI_Init(&argc, &argv);
   MPI_Comm_rank(MPI_COMM_WORLD, &rank);
   MPI_Comm_size(MPI_COMM_WORLD, &np);
 
-  unsigned n_compute_nodes = np-1;
+  unsigned n_compute_processes = np-1;
   unsigned int num_bytes = vector_size * sizeof(float);
   char data_size[18] = "";
   pretty_bytes( data_size, num_bytes );
@@ -339,18 +374,18 @@ int main(int argc, char *argv[])
 
   if(rank == 0)
     {
-      printf("Assigning data server node to rank %d.\n", rank);
+      printf("Assigning data server process to rank %d.\n", rank);
       fflush(stdout);
       data_server(vector_size);
     }
   else
     {
-      printf("Assigning compute node to rank %d.\n", rank);
+      printf("Assigning compute process to rank %d.\n", rank);
       fflush(stdout);
       if(gpu)
-	compute_node_gpu(vector_size/n_compute_nodes);
+	compute_process_gpu(vector_size/n_compute_processes);
       else
-	compute_node(vector_size/n_compute_nodes);
+	compute_process(vector_size/n_compute_processes);
 
     }
 
