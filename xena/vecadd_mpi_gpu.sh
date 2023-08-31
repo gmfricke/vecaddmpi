@@ -4,7 +4,7 @@
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=3
 #SBATCH --time=00:10:00
-#SBATCH --mem-per-cpu=4G
+#SBATCH --mem=32G
 #SBATCH --gpus 2
 #SBATCH --mail-user=yourusername@email.addr
 #SBATCH --mail-type=All

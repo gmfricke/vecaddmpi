@@ -3,6 +3,7 @@
 #include "stdio.h"
 #include "stdlib.h"
 #include "mpi.h"
+#include <time.h>
 
 int DATA_DISTRIBUTE = 0;
 int DATA_COLLECT = 1;
@@ -61,7 +62,7 @@ void data_server(unsigned int vector_size)
   printf("DataServer: Starting with rank %d and vector of size %s\n", rank, data_size);
   fflush(stdout);
 
-  int num_nodes = np - 1, first_node = 0;
+  int num_processes = np - 1, first_process = 0;
   float *input_a = 0, *input_b = 0, *output = 0;
 
   /* Allocate input data */
@@ -75,26 +76,31 @@ void data_server(unsigned int vector_size)
       MPI_Abort( MPI_COMM_WORLD, 1 );
     }
 
+  clock_t begin = clock();
   /* Initialize input data */
   float min = 1, max = 10;
   printf("DataServer (%d): filling two input vectors with random floats between %f and %f...\n", rank, min, max);
   fflush(stdout);
   random_data(input_a, vector_size , min, max);
   random_data(input_b, vector_size , min, max);
+  clock_t end = clock();
+  double time_spent = (double)(end - begin) / CLOCKS_PER_SEC;
 
-  printf("DataServer (%d): finished generating random vector elements.\n", rank);
+  printf("DataServer (%d): finished generating %d random vector elements (%g s).\n", rank, vector_size, time_spent);
   fflush(stdout);
 
-  /* Send data to compute nodes */
+  /* Send data to compute processes */
+  clock_t begin_total = clock();
+  begin = clock();
   float *ptr_a = input_a;
   float *ptr_b = input_b;
   
   int compute_portion_size; // Number of element to receive (floats)
-  compute_portion_size = vector_size/num_nodes; // This is like the stride
+  compute_portion_size = vector_size/num_processes; // This is like the stride
 
-  for(int process = 0; process < num_nodes; process++) 
+  for(int process = 0; process < num_processes; process++) 
     {
-      printf("DataServer (%d): Sending vector of size %d to compute node with id %d.\n", rank, compute_portion_size, process);
+      printf("DataServer (%d): Sending vector of size %d to compute process with id %d.\n", rank, compute_portion_size, process);
       fflush(stdout);
 
       MPI_Send(ptr_a, compute_portion_size, MPI_FLOAT, process, DATA_DISTRIBUTE, MPI_COMM_WORLD);
@@ -104,17 +110,25 @@ void data_server(unsigned int vector_size)
       ptr_b += compute_portion_size;
     }
   
-  /* Wait for nodes to compute */
+  end = clock();
+  time_spent = (double)(end - begin) / CLOCKS_PER_SEC;
+  printf("DataServer (%d): sending complete (%g s).\n", rank, time_spent);
+ 
+  /* Wait for processes to compute */
+  begin = clock();
   MPI_Barrier(MPI_COMM_WORLD);
-  printf("DataServer (%d): All compute nodes finished. Receiving partial results.\n", rank);
+  end = clock();
+  time_spent = (double)(end - begin) / CLOCKS_PER_SEC;
+  printf("DataServer (%d): All compute processes finished (%g s). Receiving partial results...\n", rank, time_spent);
   fflush(stdout);
 
   /* Collect output data */
+  begin = clock();
   MPI_Status status;
   float *start_addr; // Where to start writing data to memory
 
   // Iterate over all the workers and receive their results
-  for(int process = 0; process < num_nodes; process++) 
+  for(int process = 0; process < num_processes; process++) 
     {
       // Divide up the result buffer so each worker writes to the 
       // correct area of memory
@@ -122,49 +136,55 @@ void data_server(unsigned int vector_size)
       
       MPI_Recv( start_addr, compute_portion_size, MPI_FLOAT, process, DATA_COLLECT, MPI_COMM_WORLD, &status );
     }
+  end = clock();
+  time_spent = (double)(end - begin) / CLOCKS_PER_SEC;
+  printf("DataServer (%d): Recieved results from all compute processes (%g s).\n", rank, time_spent);
+
+  clock_t end_total = clock();
+  double total_time_spent = (double)(end_total - begin_total) / CLOCKS_PER_SEC;
+  printf("DataServer (%d): Total time %g s.\n", rank, total_time_spent);
 
 
+  
   // Check the result against a serial computation
-  printf("DataServer (%d): Comparing parallel computation to serial computation...\n", rank);
-  fflush(stdout);
+  //printf("DataServer (%d): Comparing parallel computation to serial computation...\n", rank);
+  //fflush(stdout);
 
-  printf("DataServer (%d): Performing serial computation...\n", rank);
-  fflush(stdout);
+  //printf("DataServer (%d): Performing serial computation...\n", rank);
+  //fflush(stdout);
 
   // Add vectors in serial
-  float *serial_output = (float *)malloc(num_bytes);
-  for(int i = 0; i < vector_size; ++i) 
-    serial_output[i] = input_a[i] + input_b[i];
+  //float *serial_output = (float *)malloc(num_bytes);
+  //for(int i = 0; i < vector_size; ++i) 
+  //  serial_output[i] = input_a[i] + input_b[i];
   
-  printf("DataServer (%d): Comparing results...\n", rank);
-  fflush(stdout);
+  //printf("DataServer (%d): Comparing results...\n", rank);
+  //fflush(stdout);
 
-  float error = 0;
-  float total = 0;
-  for(int i = 0; i < vector_size; ++i)
-    {
-      total = total + serial_output[i];
-      error = error + abs(serial_output[i] - output[i]);
-    }
+  //float error = 0;
+  //float total = 0;
+  //for(int i = 0; i < vector_size; ++i)
+  //  {
+  //    total = total + serial_output[i];
+  //    error = error + abs(serial_output[i] - output[i]);
+  //  }
 
-  printf("DataServer (%d): Error is %f%%.\n", rank, error/total);
-  fflush(stdout);
+  //printf("DataServer (%d): Error is %f%%.\n", rank, error/total);
+  //fflush(stdout);
 
   /* Release resources */
   free(input_a);
   free(input_b);
-  free(serial_output);
+  //free(serial_output);
   free(output);
 }
 
-void compute_node(unsigned int vector_size ) 
+void compute_process(unsigned int vector_size ) 
 {
+  clock_t begin = clock();
   // This process id
   int rank = -1;
   MPI_Comm_rank(MPI_COMM_WORLD, &rank);
-
-  printf("ComputeNode: Starting with rank %d.\n", rank);
-  fflush(stdout);
 
   int np;
   unsigned int num_bytes = vector_size * sizeof(float);
@@ -179,8 +199,15 @@ void compute_node(unsigned int vector_size )
   input_b = (float *)malloc(num_bytes);
   output = (float *)malloc(num_bytes);
 
-  printf("ComputeNode (%d): Waiting for vectors from dataserver with rank %d...\n", rank, server_process);
+  clock_t end = clock();
+  double time_spent = (double)(end - begin) / CLOCKS_PER_SEC;
+  printf("ComputeProcess: Started with rank %d (%g s).\n", rank, time_spent);
   fflush(stdout);
+
+  printf("ComputeProcess (%d): Waiting for vectors from dataserver with rank %d...\n", rank, server_process);
+  fflush(stdout);
+
+  begin = clock();
 
   /* Get the input data from server process */
   MPI_Recv(input_a, vector_size, MPI_FLOAT, server_process,
@@ -189,13 +216,20 @@ void compute_node(unsigned int vector_size )
   MPI_Recv(input_b, vector_size, MPI_FLOAT, server_process,
 	   DATA_DISTRIBUTE, MPI_COMM_WORLD, &status);
 
+  end = clock();
+  time_spent = (double)(end - begin) / CLOCKS_PER_SEC;
+  printf("ComputeProcess (%d): Waited for %g s.\n", rank, time_spent);
+
+  begin = clock();
   /* Compute the partial vector addition */
   for(int i = 0; i < vector_size; ++i) 
       output[i] = input_a[i] + input_b[i];
   
-
   // Signal that computation is done
-  printf("ComputeNode (%d): Partial vector addition complete.\n", rank);
+  end = clock();
+  time_spent = (double)(end - begin) / CLOCKS_PER_SEC;
+
+  printf("ComputeProcess (%d): Partial vector addition complete (%g s).\n", rank, time_spent);
   fflush(stdout);
   MPI_Barrier(MPI_COMM_WORLD);
 
@@ -212,7 +246,7 @@ void compute_node(unsigned int vector_size )
 
 int main(int argc, char *argv[]) 
 {
-  int vector_size = 1024 * 1024 * 100;
+  int vector_size = 1024 * 1024 * 1000;
 
   int pid=-1, np=-1;
   MPI_Init(&argc, &argv);
@@ -233,17 +267,18 @@ int main(int argc, char *argv[])
     }
 
   if(pid < np - 1){
-    printf("Assigning compute node to rank %d.\n", pid);
+    printf("Assigning compute process to rank %d.\n", pid);
     fflush(stdout);
-    compute_node(vector_size / (np - 1));
+    compute_process(vector_size / (np - 1));
   }
   else
     {
-      printf("Assigning data server node to rank %d.\n", pid);
+      printf("Assigning data server process to rank %d.\n", pid);
       fflush(stdout);
       data_server(vector_size);
     }
 
   MPI_Finalize();
+  
   return 0;
 }
